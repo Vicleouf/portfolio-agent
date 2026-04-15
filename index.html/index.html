@@ -27,8 +27,6 @@
   .dot{width:7px;height:7px;border-radius:50%;background:var(--green);flex-shrink:0;animation:pulse 2s ease-in-out infinite;}
   .dot.load{background:var(--amber);}.dot.err{background:var(--red);animation:none;}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
-  .pbar-wrap{width:100%;height:2px;background:var(--border2);border-radius:2px;margin-top:5px;overflow:hidden;display:none;}
-  .pbar{height:100%;background:var(--accent);border-radius:2px;transition:width .3s ease;width:0%;}
   .tabs{display:flex;gap:2px;margin-bottom:1.5rem;border-bottom:1px solid var(--border);flex-wrap:wrap;}
   .tab{padding:8px 16px;font-size:.72rem;font-family:var(--mono);border:none;background:none;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;transition:all .15s;text-transform:uppercase;letter-spacing:.06em;position:relative;bottom:-1px;}
   .tab.active{color:var(--accent);border-bottom-color:var(--accent);}.tab:hover:not(.active){color:var(--text);}
@@ -105,16 +103,13 @@
 
 <div class="sbar">
   <div class="dot load" id="sdot"></div>
-  <div style="flex:1;">
-    <div id="stxt">Chargement des cours...</div>
-    <div class="pbar-wrap" id="pbwrap"><div class="pbar" id="pbar"></div></div>
-  </div>
+  <span id="stxt" style="flex:1">Chargement des cours...</span>
   <span id="ssrc" style="font-size:.62rem;color:var(--accent2);"></span>
 </div>
 
 <div class="metrics">
   <div class="metric"><div class="mlabel">Investi</div><div class="mval neu" id="m0">—</div><div class="msub">Capital de base</div></div>
-  <div class="metric"><div class="mlabel">Valeur actuelle</div><div class="mval neu" id="m1">—</div><div class="msub">Cours du jour</div></div>
+  <div class="metric"><div class="mlabel">Valeur actuelle</div><div class="mval neu" id="m1">—</div><div class="msub">Cours en direct</div></div>
   <div class="metric"><div class="mlabel">+/- latente</div><div class="mval neu" id="m2">—</div><div class="msub" id="m2s">—</div></div>
   <div class="metric"><div class="mlabel">Variation jour</div><div class="mval neu" id="m3">—</div><div class="msub">Ouv. → clôture</div></div>
   <div class="metric"><div class="mlabel">Revenus / an</div><div class="mval neu">$299</div><div class="msub">Dividendes estimés</div></div>
@@ -184,8 +179,8 @@
   <div id="adderr" style="font-size:.72rem;color:var(--red);margin-top:8px;"></div>
   <hr class="dv">
   <div style="font-size:.72rem;color:var(--muted);line-height:2;">
-    Source : <span style="color:var(--accent2)">Stooq via Netlify Function</span><br>
-    Gratuit · Sans clé · Données de clôture du dernier jour de bourse.<br>
+    Prix : <span style="color:var(--accent2)">Yahoo Finance via Render</span><br>
+    IA : <span style="color:var(--accent2)">Anthropic via Render</span><br>
     Auto-refresh toutes les 5 minutes.
   </div>
 </div>
@@ -194,6 +189,7 @@
 
 <script>
 const COLORS=['#7c6fff','#4ecdc4','#ff6b6b','#ffd166','#06d6a0','#f72585','#4361ee'];
+const SERVER='https://portfolio-prices.onrender.com';
 
 let holdings=[
   {ticker:'AMZN',type:'Action', qty:7,  pru:178.634,quant:'4.76',valuation:'D', growth:'A-',profit:'A+',momentum:'B', safety:'—',yield:'—'},
@@ -214,50 +210,26 @@ function saveAntKey(){
 }
 function setAS(m,c){const e=document.getElementById('ant-status');e.textContent=m;e.style.color=c;}
 
-/* ── Prix via Netlify Function (contourne le CORS) ── */
-async function fetchPrice(ticker){
-  const r=await fetch(`/.netlify/functions/prices?ticker=${ticker}`,{signal:AbortSignal.timeout(10000)});
-  if(!r.ok) throw new Error('HTTP '+r.status);
-  const d=await r.json();
-  if(d.error) throw new Error(d.error);
-  return{price:d.price,prev:d.prev,change:d.change,changePct:d.changePct,src:'Stooq'};
-}
-
 async function refreshPrices(){
   document.getElementById('ri').classList.add('spin');
-  document.getElementById('pbwrap').style.display='block';
-  document.getElementById('pbar').style.width='0%';
   setStatus('load','Chargement des cours...');
   document.getElementById('ssrc').textContent='';
-
-  const tickers=holdings.map(h=>h.ticker);
-  let ok=0,fail=0;
-
-  // Séquentiel pour ne pas surcharger la function
-  for(let i=0;i<tickers.length;i++){
-    const tk=tickers[i];
-    document.getElementById('stxt').textContent=`Chargement ${tk}... (${i+1}/${tickers.length})`;
-    document.getElementById('pbar').style.width=Math.round(((i)/tickers.length)*100)+'%';
-    try{
-      const d=await fetchPrice(tk);
-      if(d&&!isNaN(d.price)){prices[tk]=d;ok++;}
-      else fail++;
-    }catch(e){fail++;}
+  const tickers=holdings.map(h=>h.ticker).join(',');
+  try{
+    const r=await fetch(`${SERVER}/prices?tickers=${tickers}`,{signal:AbortSignal.timeout(35000)});
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const data=await r.json();
+    let ok=0;
+    data.forEach(q=>{
+      if(q.price&&!isNaN(q.price)){prices[q.ticker]={price:q.price,prev:q.prev,change:q.change,changePct:q.changePct,src:'Yahoo'};ok++;}
+    });
+    if(ok>0){setStatus('ok',`${ok}/${holdings.length} cours chargés`);document.getElementById('ssrc').textContent='Yahoo Finance';}
+    else setStatus('err','Aucun cours. Réessayez dans 30s (serveur en veille).');
+  }catch(e){
+    setStatus('err','Erreur réseau. Serveur peut-être en veille — réessayez dans 30s.');
   }
-
-  document.getElementById('pbar').style.width='100%';
-  setTimeout(()=>{document.getElementById('pbwrap').style.display='none';},400);
   document.getElementById('ri').classList.remove('spin');
   document.getElementById('lupdate').textContent='MAJ : '+new Date().toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
-
-  if(ok===tickers.length){
-    setStatus('ok',`${ok}/${tickers.length} cours chargés`);
-    document.getElementById('ssrc').textContent='Stooq via Netlify';
-  } else if(ok>0){
-    setStatus('ok',`${ok}/${tickers.length} cours chargés`);
-  } else {
-    setStatus('err','Erreur. Vérifie que le dossier netlify/functions est bien déployé.');
-  }
   renderAll();
 }
 
@@ -359,8 +331,8 @@ function addPos(){
   refreshPrices();
 }
 function delPos(i){holdings.splice(i,1);save();renderAll();}
-function save(){localStorage.setItem('ph_v9',JSON.stringify(holdings));}
-function load(){const s=localStorage.getItem('ph_v9');if(s){try{holdings=JSON.parse(s);}catch(e){}}}
+function save(){localStorage.setItem('ph_v11',JSON.stringify(holdings));}
+function load(){const s=localStorage.getItem('ph_v11');if(s){try{holdings=JSON.parse(s);}catch(e){}}}
 
 function sw(n,b){
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
@@ -383,19 +355,21 @@ async function runAI(){
       holdings.map(h=>{const p=prices[h.ticker];const v=gv(h);const pP=p?((p.price/h.pru)-1)*100:0;
         return `${h.ticker} (${h.type}): ${h.qty}× PRU $${h.pru.toFixed(2)} → ${p?'$'+p.price.toFixed(2):'N/A'} | $${v.toFixed(0)} | ${pP>=0?'+':''}${pP.toFixed(1)}% | poids ${(v/tot*100).toFixed(1)}%`;}).join('\n');
     sys='Tu es analyste financier senior. Réponds en français, structuré, actionnable.\n\nBILAN GLOBAL\n[3-4 phrases]\n\nDIVERSIFICATION & RISQUES\n[analyse]\n\nPOSITIONS EN VIGILANCE\n[focus pertes]\n\nPOINTS FORTS\n- x3\n\nRECOMMANDATIONS\n1.\n2.\n3.\n\nHORIZON 12 MOIS\n[perspective]\n\n⚠️ Analyse informative uniquement.';
-  } else {
+  }else{
     const h=holdings.find(x=>x.ticker===ticker);const p=prices[ticker];const v=gv(h);
     prompt=`${ticker} (${h.type}): ${h.qty}× PRU $${h.pru.toFixed(2)} → ${p?'$'+p.price.toFixed(2):'N/A'}\nValeur $${v.toFixed(0)} | Poids ${(v/tot*100).toFixed(1)}% | P&L ${p?((p.price/h.pru-1)*100).toFixed(1)+'%':'N/A'}\nQuant:${h.quant} Val:${h.valuation} Growth:${h.growth} Profit:${h.profit} Momentum:${h.momentum}`;
     sys='Tu es analyste financier senior. Réponds en français, concis.\n\nANALYSE FONDAMENTALE\n[2-3 phrases]\n\nPOINTS FORTS\n- x3\n\nRISQUES\n- x2\n\nAVIS SUR LA POSITION\n[renforcer/conserver/alléger]\n\nRECOMMANDATION\n[1 phrase horizon 12 mois]\n\n⚠️ Analyse informative uniquement.';
   }
   try{
-    const r=await fetch('https://api.anthropic.com/v1/messages',{
+    /* Appel via le serveur Render — contourne le blocage CORS d'Anthropic */
+    const r=await fetch(`${SERVER}/ai`,{
       method:'POST',
-      headers:{'Content-Type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01'},
-      body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:1200,system:sys,messages:[{role:'user',content:prompt}]})
+      headers:{'Content-Type':'application/json','x-api-key':key},
+      body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:1200,system:sys,messages:[{role:'user',content:prompt}]}),
+      signal:AbortSignal.timeout(35000)
     });
     const d=await r.json();
-    if(d.error) throw new Error(d.error.message);
+    if(d.error) throw new Error(typeof d.error==='object'?d.error.message:d.error);
     document.getElementById('aicontent').innerHTML=(d.content?.find(c=>c.type==='text')?.text||'').replace(/\n/g,'<br>');
   }catch(e){
     document.getElementById('aicontent').innerHTML=`<span style="color:var(--red)">Erreur : ${e.message}</span>`;
